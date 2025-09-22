@@ -1,0 +1,496 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService") -- Add this line
+local player = Players.LocalPlayer
+local hrp = nil
+
+local isActive = false
+local isBeton = false
+local animConn
+
+local function refreshHRP(char)
+    if not char then
+        char = player.Character or player.CharacterAdded:Wait()
+    end
+    hrp = char:WaitForChild("HumanoidRootPart")
+end
+if player.Character then refreshHRP(player.Character) end
+player.CharacterAdded:Connect(refreshHRP)
+
+local function setup(char)
+    local humanoid = char:WaitForChild("Humanoid")
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local lastPos = hrp.Position
+
+    if animConn then animConn:Disconnect() end
+    animConn = RunService.RenderStepped:Connect(function()
+        if not hrp or not hrp.Parent then return end
+
+        if isActive then
+            local direction = (hrp.Position - lastPos)
+            local dist = direction.Magnitude
+            if dist > 0.01 then
+                local moveVector = direction.Unit * math.clamp(dist*5,0,1)
+                humanoid:Move(moveVector,false)
+            else
+                humanoid:Move(Vector3.zero,false)
+            end
+        end
+
+        if isBeton then
+            humanoid.Health = humanoid.MaxHealth
+        end
+
+        lastPos = hrp.Position
+    end)
+end
+
+player.CharacterAdded:Connect(setup)
+if player.Character then setup(player.Character) end
+
+local frameTime = 1/30
+local playbackRate = 1.0
+local isRunning = false
+local routes = {}
+
+local ROUTE_URLS = {
+    ["CP1-Summit"] = "https://raw.githubusercontent.com/kyzen-ofc-15/script/refs/heads/main/WalkSummitYNTKTS"
+}
+
+local function getNearestRoute()
+    local nearestIdx, dist = 1, math.huge
+    if hrp then
+        local pos = hrp.Position
+        for i,data in ipairs(routes) do
+            for _,cf in ipairs(data[2]) do
+                local d = (cf.Position - pos).Magnitude
+                if d < dist then
+                    dist = d
+                    nearestIdx = i
+                end
+            end
+        end
+    end
+    return nearestIdx
+end
+
+local function getNearestFrameIndex(frames)
+    local startIdx, dist = 1, math.huge
+    if hrp then
+        local pos = hrp.Position
+        for i,cf in ipairs(frames) do
+            local d = (cf.Position - pos).Magnitude
+            if d < dist then
+                dist = d
+                startIdx = i
+            end
+        end
+    end
+    if startIdx >= #frames then
+        startIdx = math.max(1, #frames - 1)
+    end
+    return startIdx
+end
+
+local function lerpCF(fromCF, toCF)
+    local duration = frameTime / math.max(0.05, playbackRate)
+    local t = 0
+    while t < duration do
+        if not isRunning then break end
+        local dt = task.wait()
+        t += dt
+        local alpha = math.min(t / duration, 1)
+        if hrp and hrp.Parent and hrp:IsDescendantOf(workspace) then
+            hrp.CFrame = fromCF:Lerp(toCF, alpha)
+        end
+    end
+end
+
+-- ScreenGui is now parented to PlayerGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "KyzenzUI"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- NEW: Main button for toggling the GUI
+local size = 40
+local mainButton = Instance.new("TextButton")
+mainButton.Size = UDim2.new(0, size, 0, size)
+mainButton.Position = UDim2.new(0.05, 0, 0.3, 0)
+mainButton.BackgroundColor3 = Color3.fromRGB(0,0,0)
+mainButton.Text = "KF"
+mainButton.TextColor3 = Color3.fromRGB(255,255,255)
+mainButton.Font = Enum.Font.GothamBold
+mainButton.TextScaled = false
+mainButton.TextSize = 18
+mainButton.AutoButtonColor = false
+mainButton.AnchorPoint = Vector2.new(0.5,0.5)
+mainButton.Parent = screenGui
+mainButton.BorderSizePixel = 0
+
+local uicorner = Instance.new("UICorner")
+uicorner.CornerRadius = UDim.new(0.5,0)
+uicorner.Parent = mainButton
+
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Thickness = 2
+uiStroke.Color = Color3.fromHSV(0,1,1)
+uiStroke.Parent = mainButton
+uiStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+-- RGB animation for the main button's outline
+task.spawn(function()
+    local hue = 0
+    while task.wait(0.03) do
+        hue = (hue + 0.01) % 1
+        uiStroke.Color = Color3.fromHSV(hue,1,1)
+    end
+end)
+
+-- Dragging logic for the new main button
+local dragging = false
+local dragInput, dragStart, startPos
+local function update(input)
+    local delta = input.Position - dragStart
+    mainButton.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+mainButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = mainButton.Position
+    end
+end)
+
+mainButton.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        update(input)
+    end
+end)
+
+-- MainFrame is now hidden by default
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 320, 0, 245)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -122.5)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+MainFrame.Visible = false -- NEW: Hide the frame initially
+MainFrame.Active = true -- Tambahkan baris ini
+MainFrame.Draggable = true -- Tambahkan baris ini
+MainFrame.Parent = screenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 15)
+local UIStrokeOutline = Instance.new("UIStroke")
+UIStrokeOutline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+UIStrokeOutline.Color = Color3.fromRGB(255, 255, 255)
+UIStrokeOutline.Thickness = 2
+UIStrokeOutline.Transparency = 0.5
+UIStrokeOutline.Parent = MainFrame
+
+local UIGradientOutline = Instance.new("UIGradient")
+UIGradientOutline.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
+    ColorSequenceKeypoint.new(0.33, Color3.fromRGB(0, 255, 0)),
+    ColorSequenceKeypoint.new(0.66, Color3.fromRGB(0, 0, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
+}
+UIGradientOutline.Rotation = 45
+UIGradientOutline.Parent = UIStrokeOutline
+
+game:GetService("RunService").RenderStepped:Connect(function(dt)
+    UIGradientOutline.Rotation = (UIGradientOutline.Rotation + 2) % 360
+end)
+
+-- All other UI elements are the same, just parented to MainFrame
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundTransparency = 1
+Title.Text = "ᴋʏᴢᴇɴᴢ ᴏꜰꜰɪᴄɪᴀʟ"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 22
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Parent = MainFrame
+
+local Description = Instance.new("TextLabel")
+Description.Size = UDim2.new(1, 0, 0, 25)
+Description.Position = UDim2.new(0, 0, 0, 35)
+Description.BackgroundTransparency = 1
+Description.Text = "Auto Walk Mount YNTKTS"
+Description.Font = Enum.Font.GothamBold
+Description.TextSize = 16
+Description.TextColor3 = Color3.fromRGB(200, 200, 200)
+Description.Parent = MainFrame
+
+local StartStopBtn = Instance.new("TextButton")
+StartStopBtn.Size = UDim2.new(0, 100, 0, 40)
+StartStopBtn.Position = UDim2.new(0.5, -110, 0, 70)
+StartStopBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 90)
+StartStopBtn.Text = "Start CP"
+StartStopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartStopBtn.Font = Enum.Font.GothamBold
+StartStopBtn.TextSize = 18
+StartStopBtn.Parent = MainFrame
+Instance.new("UICorner", StartStopBtn).CornerRadius = UDim.new(0, 10)
+
+local StartToEndBtn = Instance.new("TextButton")
+StartToEndBtn.Size = UDim2.new(0, 100, 0, 40)
+StartToEndBtn.Position = UDim2.new(0.5, 10, 0, 70)
+StartToEndBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 220)
+StartToEndBtn.Text = "Start to End"
+StartToEndBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+StartToEndBtn.Font = Enum.Font.GothamBold
+StartToEndBtn.TextSize = 16
+StartToEndBtn.Parent = MainFrame
+Instance.new("UICorner", StartToEndBtn).CornerRadius = UDim.new(0, 10)
+
+local MinusBtn = Instance.new("TextButton")
+MinusBtn.Size = UDim2.new(0, 60, 0, 35)
+MinusBtn.Position = UDim2.new(0.5, -110, 0, 120)
+MinusBtn.BackgroundColor3 = Color3.fromRGB(220, 80, 80)
+MinusBtn.Text = "- Speed"
+MinusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinusBtn.Font = Enum.Font.GothamBold
+MinusBtn.TextSize = 14
+MinusBtn.Parent = MainFrame
+Instance.new("UICorner", MinusBtn).CornerRadius = UDim.new(0, 10)
+
+local PlusBtn = Instance.new("TextButton")
+PlusBtn.Size = UDim2.new(0, 60, 0, 35)
+PlusBtn.Position = UDim2.new(0.5, 50, 0, 120)
+PlusBtn.BackgroundColor3 = Color3.fromRGB(80, 180, 220)
+PlusBtn.Text = "+ Speed"
+PlusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlusBtn.Font = Enum.Font.GothamBold
+PlusBtn.TextSize = 14
+PlusBtn.Parent = MainFrame
+Instance.new("UICorner", PlusBtn).CornerRadius = UDim.new(0, 10)
+
+local AnimBtn = Instance.new("TextButton")
+AnimBtn.Size = UDim2.new(0, 80, 0, 35)
+AnimBtn.Position = UDim2.new(0.5, -40, 0, 120)
+AnimBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+AnimBtn.Text = "Animation: OFF"
+AnimBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AnimBtn.Font = Enum.Font.GothamBold
+AnimBtn.TextSize = 12
+AnimBtn.Parent = MainFrame
+Instance.new("UICorner", AnimBtn).CornerRadius = UDim.new(0, 8)
+
+local SpeedText = Instance.new("TextLabel")
+SpeedText.Size = UDim2.new(0, 120, 0, 25)
+SpeedText.Position = UDim2.new(0.5, -60, 0, 160)
+SpeedText.BackgroundTransparency = 1
+SpeedText.Text = string.format("Speed %.2fx", playbackRate)
+SpeedText.Font = Enum.Font.GothamBold
+SpeedText.TextSize = 16
+SpeedText.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedText.Parent = MainFrame
+
+local StatusText = Instance.new("TextLabel")
+StatusText.Size = UDim2.new(1, 0, 0, 25)
+StatusText.Position = UDim2.new(0, 0, 0, 185)
+StatusText.BackgroundTransparency = 1
+StatusText.Text = "Status: Premium"
+StatusText.Font = Enum.Font.GothamBold
+StatusText.TextSize = 16
+StatusText.TextColor3 = Color3.fromRGB(255, 200, 0)
+StatusText.Parent = MainFrame
+
+local PlayerInfoFrame = Instance.new("Frame")
+PlayerInfoFrame.Size = UDim2.new(1, -20, 0, 35)
+PlayerInfoFrame.Position = UDim2.new(0, 10, 1, -45)
+PlayerInfoFrame.BackgroundTransparency = 1
+PlayerInfoFrame.Parent = MainFrame
+PlayerInfoFrame.LayoutOrder = 1
+
+local AvatarImage = Instance.new("ImageLabel")
+AvatarImage.Size = UDim2.new(0, 30, 0, 30)
+AvatarImage.Position = UDim2.new(0, 0, 0.5, -15)
+AvatarImage.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+AvatarImage.BackgroundTransparency = 0
+AvatarImage.ScaleType = Enum.ScaleType.Fit
+AvatarImage.Parent = PlayerInfoFrame
+Instance.new("UICorner", AvatarImage).CornerRadius = UDim.new(0.5, 0)
+
+local PremiumText = Instance.new("TextLabel")
+PremiumText.Size = UDim2.new(1, -40, 0, 20)
+PremiumText.Position = UDim2.new(0, 35, 0.5, -10)
+PremiumText.BackgroundTransparency = 1
+PremiumText.Text = "Premium User🔥🔥"
+PremiumText.Font = Enum.Font.GothamBold
+PremiumText.TextSize = 16
+PremiumText.TextColor3 = Color3.fromRGB(255, 220, 0)
+PremiumText.TextXAlignment = Enum.TextXAlignment.Left
+PremiumText.Parent = PlayerInfoFrame
+
+local userId = player.UserId
+local thumbType = Enum.ThumbnailType.HeadShot
+local thumbSize = Enum.ThumbnailSize.Size48x48
+local content, isReady = Players:GetUserThumbnailAsync(userId, thumbType, thumbSize)
+if isReady then
+    AvatarImage.Image = content
+else
+    AvatarImage.Image = "rbxassetid://604603689"
+end
+
+local function setAnimState(state)
+    isActive = state
+    if isActive then
+        AnimBtn.Text = "Animation: ON"
+        AnimBtn.BackgroundColor3 = Color3.fromRGB(50, 180, 90)
+    else
+        AnimBtn.Text = "Animation: OFF"
+        AnimBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    end
+end
+
+AnimBtn.MouseButton1Click:Connect(function()
+    setAnimState(not isActive)
+end)
+
+local function setStatus(running)
+    if running then
+        StatusText.Text = "Status: Running"
+        StatusText.TextColor3 = Color3.fromRGB(40, 220, 120)
+        setAnimState(true)
+    else
+        StatusText.Text = "Status: Stopped"
+        StatusText.TextColor3 = Color3.fromRGB(220, 80, 80)
+        setAnimState(false)
+    end
+end
+
+local function resetButtons()
+    if StartStopBtn and StartStopBtn.Text == "Stop" then
+        StartStopBtn.Text = "Start CP"
+        StartStopBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 90)
+    end
+    if StartToEndBtn and StartToEndBtn.Text == "Stop" then
+        StartToEndBtn.Text = "Start to End"
+        StartToEndBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 220)
+    end
+end
+
+local function stopRoute()
+    isRunning = false
+    setStatus(false)
+    resetButtons()
+end
+
+local function runRouteOnce()
+    if #routes == 0 then return end
+    if not hrp then refreshHRP() end
+    isRunning = true
+    setStatus(true)
+    local idx = getNearestRoute()
+    local frames = routes[idx][2]
+    if #frames < 2 then stopRoute() return end
+    local startIdx = getNearestFrameIndex(frames)
+    for i = startIdx, #frames - 1 do
+        if not isRunning then break end
+        lerpCF(frames[i], frames[i+1])
+    end
+    stopRoute()
+end
+
+local function runAllRoutes()
+    if #routes == 0 then return end
+    if not hrp then refreshHRP() end
+    isRunning = true
+    setStatus(true)
+    local idx = getNearestRoute()
+    for r = idx, #routes do
+        if not isRunning then break end
+        local frames = routes[r][2]
+        if #frames < 2 then continue end
+        local startIdx = getNearestFrameIndex(frames)
+        for i = startIdx, #frames - 1 do
+            if not isRunning then break end
+            lerpCF(frames[i], frames[i+1])
+        end
+    end
+    stopRoute()
+end
+
+StartStopBtn.MouseButton1Click:Connect(function()
+    if not isRunning then
+        if StartToEndBtn.Text == "Stop" then
+            StartToEndBtn.Text = "Start to End"
+            StartToEndBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 220)
+        end
+        StartStopBtn.Text = "Stop"
+        StartStopBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+        task.spawn(runRouteOnce)
+    else
+        stopRoute()
+    end
+end)
+
+StartToEndBtn.MouseButton1Click:Connect(function()
+    if not isRunning then
+        if StartStopBtn.Text == "Stop" then
+            StartStopBtn.Text = "Start CP"
+            StartStopBtn.BackgroundColor3 = Color3.fromRGB(40, 180, 90)
+        end
+        StartToEndBtn.Text = "Stop"
+        StartToEndBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+        task.spawn(runAllRoutes)
+    else
+        stopRoute()
+    end
+end)
+
+MinusBtn.MouseButton1Click:Connect(function()
+    playbackRate = math.max(0.25, playbackRate - 0.25)
+    SpeedText.Text = string.format("Speed %.2fx", playbackRate)
+end)
+
+PlusBtn.MouseButton1Click:Connect(function()
+    playbackRate = math.min(3, playbackRate + 0.25)
+    SpeedText.Text = string.format("Speed %.2fx", playbackRate)
+end)
+
+local function loadRoutes()
+    for name, url in pairs(ROUTE_URLS) do
+        local success, result = pcall(function()
+            return loadstring(game:HttpGet(url))()
+        end)
+        if success and type(result) == "table" then
+            routes[#routes + 1] = {name, result}
+        else
+            warn("Gagal Scripts" .. url .. ": " .. tostring(result))
+        end
+    end
+end
+
+task.spawn(loadRoutes)
+
+local isGuiOpen = false -- New variable to track UI state
+-- New: Connect mainButton click to toggle MainFrame visibility
+mainButton.MouseButton1Click:Connect(function()
+    isGuiOpen = not isGuiOpen
+    MainFrame.Visible = isGuiOpen
+end)
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -35, 0, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+CloseBtn.Text = "X"
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 20
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.Parent = MainFrame
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    stopRoute()
+    if animConn then animConn:Disconnect() end
+    screenGui:Destroy()
+end)
