@@ -1,9 +1,998 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta http-equiv="Content-Type" content="text/plain; charset=UTF-8">
+  <meta charset="UTF-8">
+  <title>Raw Lua Script</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+  </style>
 </head>
 <body>
-hello
+<pre>
+localplayer = game.Players.LocalPlayer
+local char = localplayer.Character or localplayer.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+localplayer.CharacterAdded:Connect(function(newChar)
+    char = newChar
+    hrp = char:WaitForChild("HumanoidRootPart")
+end)
+
+local records = {}
+local isRecording = false
+local isPlaying = false
+local frametime = 1/30
+local currentfilename = "Replay.lua"
+local selectedreplayfile = nil
+local lastcframe = nil 
+
+local isresumeenabled = false
+local lastplayedindex = 1 
+
+local replayfolder = "ndraawzrecord"
+if not isfolder(replayfolder) then
+    makefolder(replayfolder)
+end
+
+local gui, frame, recordbtn, playbtn, stopbtn, savebtn, loadbtn, replayframe, resumebtn, editorframe
+local mainbtn, loglabel, copybtn
+local draggingframe = false
+local dragstartpos
+local startframepos, startreplaypos
+local userinputservice = game:GetService("UserInputService")
+
+local timerlabel
+local starttime = 0
+local elapsedseconds = 0
+local timerconnection = nil
+local currentreplaycontent = {}
+
+-- Variabel untuk Paginasi, Seleksi Massal, dan Status GUI
+local framesperpage = 100 
+local currenteditorpage = 1
+local totalpages = 1
+local selectedframes = {} 
+local currentguistate = "main" -- 'main', 'list', atau 'editor'
+
+-------------------------------------------------------------------------------
+-- TIMER FUNCTIONS
+-------------------------------------------------------------------------------
+
+local function updatetimer()
+    elapsedseconds = os.time() - starttime
+    local h = math.floor(elapsedseconds / 3600)
+    local m = math.floor((elapsedseconds % 3600) / 60)
+    local s = math.floor(elapsedseconds % 60)
+    timerlabel.Text = string.format("%02d:%02d:%02d", h, m, s)
+end
+
+local function starttimer()
+    if timerconnection then timerconnection:Disconnect() end
+    starttime = os.time() - elapsedseconds
+    timerconnection = game:GetService("RunService").Heartbeat:Connect(updatetimer)
+end
+
+local function stoptimer()
+    if timerconnection then
+        timerconnection:Disconnect()
+        timerconnection = nil
+    end
+end
+
+-------------------------------------------------------------------------------
+-- FILE / RECORDING FUNCTIONS
+-------------------------------------------------------------------------------
+
+local function getfilestats(path)
+    local ok, data = pcall(readfile, path)
+    if not ok or not data then return 0, "N/A" end
+    local lines = #string.split(data,"\n")
+    local size = #data
+    local sizetext = size >= 1024*1024 and string.format("%.2f MB", size/1024/1024)
+        or string.format("%.2f KB", size/1024)
+    return lines, sizetext
+end
+
+function startrecord()
+    if isRecording then return end
+    records = {}
+    isRecording = true
+    recordbtn.Text = "⏸ Stop Record"
+    playbtn.Visible = false
+    stopbtn.Visible = false
+    savebtn.Visible = false
+    loadbtn.Visible = false
+    selectedreplayfile = nil
+    lastplayedindex = 1 
+
+    task.spawn(function()
+        while isRecording do
+            if hrp then
+                table.insert(records, hrp.CFrame)
+            end
+            task.wait(frametime)
+        end
+    end)
+end
+
+function stoprecord()
+    if not isRecording then return end
+    isRecording = false
+    recordbtn.Text = "⏺ Start Record"
+    playbtn.Visible = true
+    stopbtn.Visible = true
+    savebtn.Visible = true
+    loadbtn.Visible = true
+end
+
+function playrecord()
+    if isRecording or #records < 2 or selectedreplayfile == nil then 
+        loglabel.Text = "⚠️ Select a replay file first!"
+        return 
+    end
+    
+    local startindex = 1
+    if isresumeenabled and lastplayedindex > 1 then
+        startindex = lastplayedindex
+    else
+        elapsedseconds = 0 
+        lastplayedindex = 1
+    end
+    
+    isPlaying = true
+    starttimer()
+
+    for i = startindex, #records-1 do
+        if not isPlaying then break end
+        
+        lastplayedindex = i
+        
+        local startpos = records[i]
+        local endpos = records[i+1]
+        local t = 0
+        while t < frametime do
+            if not isPlaying then break end
+            t += task.wait()
+            local alpha = math.min(t/frametime, 1)
+            if hrp and hrp.Parent and hrp:IsDescendantOf(workspace) then
+                local cf = startpos:Lerp(endpos, alpha)
+                hrp.CFrame = cf
+                lastcframe = cf
+                if loglabel then
+                    local pos = cf.Position
+                    local rot = {cf:ToOrientation()}
+                    loglabel.Text = string.format(
+                        "CFrame.new(%.3f, %.3f, %.3f) * CFrame.Angles(%.3f, %.3f, %.3f)",
+                        pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3]
+                    )
+                end
+            end
+        end
+    end
+    
+    if isPlaying then
+        isPlaying = false
+        stoptimer()
+        lastplayedindex = 1
+        local currentcf = hrp.CFrame
+        if currentcf and loglabel then
+            local pos = currentcf.Position
+            local rot = {currentcf:ToOrientation()}
+            loglabel.Text = string.format("Playback Done (Index #%d) → CFrame.new(%.3f, %.3f, %.3f) * CFrame.Angles(%.3f, %.3f, %.3f)", lastplayedindex, pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3])
+        end
+    end
+end
+
+function stopplay()
+    if not isPlaying then return end 
+    stoptimer()
+    isPlaying = false
+    
+    local currentcf = hrp.CFrame 
+    
+    if currentcf and loglabel then
+        local pos = currentcf.Position
+        local rot = {currentcf:ToOrientation()}
+        loglabel.Text = string.format("Stop Pos (Index #%d) → CFrame.new(%.3f, %.3f, %.3f) * CFrame.Angles(%.3f, %.3f, %.3f)", lastplayedindex, pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3])
+    end
+end
+
+function saverecord()
+    if #records == 0 then return end
+    local name = currentfilename
+    if not name:match("%.lua$") then name = name..".lua" end
+    local lines = {"return {"}
+    for _, cf in ipairs(records) do
+        local pos = cf.Position
+        local rot = {cf:ToOrientation()}
+        table.insert(lines,string.format(
+            "CFrame.new(%.10f,%.10f,%.10f) * CFrame.Angles(%.10f,%.10f,%.10f),",
+            pos.X,pos.Y,pos.Z,rot[1],rot[2],rot[3]
+        ))
+    end
+    table.insert(lines,"}")
+    writefile(replayfolder.."/"..name, table.concat(lines,"\n"))
+    if replayframe and replayframe.Visible then loadreplaylist() end
+end
+
+local function loadselectedreplay(filepath)
+    if not isfile(filepath) then return end
+    local content = readfile(filepath)
+    local loaded = loadstring(content)
+    if not loaded then return end
+    records = loaded()
+    selectedreplayfile = filepath
+    lastplayedindex = 1 
+    elapsedseconds = 0
+    timerlabel.Text = "00:00:00"
+    print("✅ Loaded:",filepath,"Frames:",#records)
+end
+
+-------------------------------------------------------------------------------
+-- REPLAY EDITOR FUNCTIONS (DENGAN KONTROL STICKY DAN PENCARIAN)
+-------------------------------------------------------------------------------
+
+local function loadeditorcontent()
+    -- 1. PENGATURAN HALAMAN
+    totalpages = math.ceil(#currentreplaycontent / framesperpage)
+    if currenteditorpage < 1 then currenteditorpage = 1 end
+    if currenteditorpage > totalpages then currenteditorpage = totalpages end
+
+    local startindex = (currenteditorpage - 1) * framesperpage + 1
+    local endindex = math.min(currenteditorpage * framesperpage, #currentreplaycontent)
+
+    -- Hapus SEMUA child dari editorframe, kecuali yang penting untuk layout/padding
+    for _, child in ipairs(editorframe:GetChildren()) do
+        if child.Name ~= "EditorListLayout" and child.Name ~= "ContentPadding" and child.Name ~= "ScrollTopPadding" then
+            child:Destroy()
+        end
+    end
+    
+    -- JANGAN HAPUS: UIListLayout dan UIPadding yang sudah ada
+    local editorlistlayout = editorframe:FindFirstChild("EditorListLayout")
+    if not editorlistlayout then
+        editorlistlayout = Instance.new("UIListLayout", editorframe)
+        editorlistlayout.Name = "EditorListLayout"
+        editorlistlayout.SortOrder = Enum.SortOrder.LayoutOrder
+        editorlistlayout.Padding = UDim.new(0, 5)
+    end
+    
+    local contentPadding = editorframe:FindFirstChild("ContentPadding")
+    if not contentPadding then
+        contentPadding = Instance.new("UIPadding", editorframe)
+        contentPadding.Name = "ContentPadding"
+        contentPadding.PaddingLeft = UDim.new(0, 5)
+        contentPadding.PaddingRight = UDim.new(0, 5)
+        contentPadding.PaddingBottom = UDim.new(0, 10)
+    end
+    
+    -- Padding Awal: Ruang untuk kontrol STICKY (sekitar 80 pixel)
+    local TOP_CONTROL_HEIGHT = 80 
+    local initialPadding = editorframe:FindFirstChild("ScrollTopPadding")
+    if not initialPadding then
+        initialPadding = Instance.new("UIPadding", editorframe)
+        initialPadding.Name = "ScrollTopPadding"
+    end
+    initialPadding.PaddingTop = UDim.new(0, TOP_CONTROL_HEIGHT + 10) 
+
+    -- ** START: KONTROL STICKY (Baris 1 & 2) **
+    
+    local stickyControlFrame = Instance.new("Frame", editorframe)
+    stickyControlFrame.Name = "StickyControls"
+    stickyControlFrame.Size = UDim2.new(1, -10, 0, TOP_CONTROL_HEIGHT)
+    stickyControlFrame.Position = UDim2.new(0.5, 0, 0, 5) 
+    stickyControlFrame.AnchorPoint = Vector2.new(0.5, 0)
+    stickyControlFrame.BackgroundTransparency = 1
+    stickyControlFrame.ZIndex = 5 
+
+    -- Logika untuk menjaga kontrol agar tetap di atas saat scroll
+    -- Pastikan koneksi lama dihapus sebelum membuat yang baru
+    local old_conn = stickyControlFrame:FindFirstChild("ScrollConnection")
+    if old_conn then old_conn:Destroy() end
+
+    local connection = editorframe.Changed:Connect(function(prop)
+        if prop == "CanvasPosition" then
+            stickyControlFrame.Position = UDim2.new(
+                0.5, 0, 
+                0, editorframe.CanvasPosition.Y + 5 
+            )
+        end
+    end)
+    -- Simpan koneksi di dalam Frame agar bisa dihapus saat Editor ditutup
+    Instance.new("Configuration", stickyControlFrame).Name = "ScrollConnection"
+    
+    local controlLayout = Instance.new("UIListLayout", stickyControlFrame)
+    controlLayout.FillDirection = Enum.FillDirection.Vertical
+    controlLayout.Padding = UDim.new(0, 5)
+    controlLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    
+
+    -- Frame Baris 1: BACK & DELETE SELECTED
+    local row1 = Instance.new("Frame", stickyControlFrame)
+    row1.Size = UDim2.new(1, -10, 0, 30)
+    row1.BackgroundTransparency = 1
+    row1.LayoutOrder = 1
+    
+    local backbtn = Instance.new("TextButton", row1)
+    backbtn.Size = UDim2.new(0.3, 0, 1, 0)
+    backbtn.Position = UDim2.new(0, 0, 0, 0)
+    backbtn.Text = "← BACK"
+    backbtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    Instance.new("UICorner", backbtn).CornerRadius = UDim.new(0, 6)
+    backbtn.MouseButton1Click:Connect(function()
+        selectedframes = {} 
+        -- Hapus koneksi Changed 
+        connection:Disconnect() 
+        editorframe.Visible = false
+        replayframe.Visible = true 
+        currentguistate = "list"
+        loadreplaylist() 
+    end)
+    
+    local deleteselectedbtn = Instance.new("TextButton", row1)
+    deleteselectedbtn.Size = UDim2.new(0.3, 0, 1, 0)
+    deleteselectedbtn.Position = UDim2.new(0.35, 5, 0, 0) 
+    deleteselectedbtn.Text = string.format("🗑️ Delete Selected (%d)", #selectedframes)
+    deleteselectedbtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    Instance.new("UICorner", deleteselectedbtn).CornerRadius = UDim.new(0, 6)
+    
+    deleteselectedbtn.MouseButton1Click:Connect(function()
+        if #selectedframes == 0 then
+            loglabel.Text = "⚠️ No frames selected for deletion."
+            return
+        end
+        
+        table.sort(selectedframes, function(a, b) return a > b end)
+        local count = 0
+        for _, index_to_delete in ipairs(selectedframes) do
+            table.remove(currentreplaycontent, index_to_delete)
+            count = count + 1
+        end
+        records = currentreplaycontent
+        selectedframes = {} 
+        currenteditorpage = 1 
+        
+        loadeditorcontent()
+        loglabel.Text = string.format("❌ Deleted %d lines from memory. Re-save required.", count)
+    end)
+    
+    local pagelabel = Instance.new("TextLabel", row1)
+    pagelabel.Size = UDim2.new(0.3, -5, 1, 0)
+    pagelabel.Position = UDim2.new(0.65, 5, 0, 0)
+    pagelabel.Text = string.format("P: %d/%d (T: %d)", currenteditorpage, totalpages, #currentreplaycontent)
+    pagelabel.BackgroundTransparency = 1
+    pagelabel.TextColor3 = Color3.new(1, 1, 1)
+
+
+    -- Frame Baris 2: Navigasi Halaman dan Pencarian
+    local row2 = Instance.new("Frame", stickyControlFrame)
+    row2.Size = UDim2.new(1, -10, 0, 30)
+    row2.BackgroundTransparency = 1
+    row2.LayoutOrder = 2
+    
+    local prevbtn = Instance.new("TextButton", row2)
+    prevbtn.Size = UDim2.new(0.15, 0, 1, 0)
+    prevbtn.Position = UDim2.new(0, 0, 0, 0)
+    prevbtn.Text = "←"
+    prevbtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    Instance.new("UICorner", prevbtn).CornerRadius = UDim.new(0, 6)
+    prevbtn.MouseButton1Click:Connect(function()
+        currenteditorpage = currenteditorpage - 1
+        loadeditorcontent()
+    end)
+    if currenteditorpage == 1 then prevbtn.BackgroundTransparency = 0.5 end
+
+    local nextbtn = Instance.new("TextButton", row2)
+    nextbtn.Size = UDim2.new(0.15, 0, 1, 0)
+    nextbtn.Position = UDim2.new(0.85, 0, 0, 0)
+    nextbtn.Text = "→"
+    nextbtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    Instance.new("UICorner", nextbtn).CornerRadius = UDim.new(0, 6)
+    nextbtn.MouseButton1Click:Connect(function()
+        currenteditorpage = currenteditorpage + 1
+        loadeditorcontent()
+    end)
+    if currenteditorpage == totalpages then nextbtn.BackgroundTransparency = 0.5 end
+
+    local searchbox = Instance.new("TextBox", row2)
+    searchbox.Size = UDim2.new(0.65, -10, 1, 0)
+    searchbox.Position = UDim2.new(0.2, 5, 0, 0)
+    searchbox.PlaceholderText = "Search Line #"
+    searchbox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    searchbox.TextColor3 = Color3.new(1, 1, 1)
+    searchbox.Font = Enum.Font.Gotham
+    searchbox.TextSize = 14
+    Instance.new("UICorner", searchbox).CornerRadius = UDim.new(0, 6)
+    
+    local function searchline()
+        local line_number = tonumber(searchbox.Text)
+        if line_number and line_number >= 1 and line_number <= #currentreplaycontent then
+            local target_page = math.ceil(line_number / framesperpage)
+            currenteditorpage = target_page
+            
+            -- Gulirkan sedikit ke bawah agar line yang dicari terlihat
+            local y_offset = (line_number % framesperpage) * 35 
+            editorframe.CanvasPosition = Vector2.new(0, y_offset)
+            
+            loadeditorcontent()
+            loglabel.Text = "✅ Found Line #"..line_number.." on Page "..target_page
+        else
+            loglabel.Text = "⚠️ Invalid Line # or out of range (1 - "..#currentreplaycontent..")"
+        end
+    end
+
+    searchbox.FocusLost:Connect(function(enter_pressed)
+        if enter_pressed then
+            searchline()
+        end
+    end)
+    searchbox.Text = "Search Line #"
+
+    -- ** END: KONTROL STICKY **
+    
+    -- 3. Konten Baris Frame (di bawah sticky control)
+    local layoutorder = 1 
+
+    for i = startindex, endindex do
+        local cf = currentreplaycontent[i]
+        
+        local container = Instance.new("Frame", editorframe)
+        container.Size = UDim2.new(1, 0, 0, 35)
+        container.BackgroundTransparency = 1
+        container.LayoutOrder = layoutorder
+        
+        local isselected = table.find(selectedframes, i) ~= nil
+        
+        if isselected then
+            container.BackgroundColor3 = Color3.fromRGB(50, 120, 255) 
+            container.BackgroundTransparency = 0.8
+        end
+        
+        local pos = cf.Position
+        local rot = {cf:ToOrientation()}
+
+        -- Tombol SELECT (✔️)
+        local selectbtn = Instance.new("TextButton", container)
+        selectbtn.Size = UDim2.new(0, 45, 1, -5)
+        selectbtn.Position = UDim2.new(0, 0, 0, 2.5)
+        selectbtn.Text = isselected and "✔️" or "⭕"
+        selectbtn.BackgroundColor3 = isselected and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(50, 50, 50)
+        selectbtn.TextColor3 = Color3.new(1, 1, 1)
+        selectbtn.Font = Enum.Font.GothamBold
+        Instance.new("UICorner", selectbtn).CornerRadius = UDim.new(0, 6)
+
+        -- Tombol TP (Teleport)
+        local tpbtn = Instance.new("TextButton", container)
+        tpbtn.Size = UDim2.new(0, 45, 1, -5)
+        tpbtn.Position = UDim2.new(0, 50, 0, 2.5)
+        tpbtn.Text = "TP"
+        tpbtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+        tpbtn.TextColor3 = Color3.new(1, 1, 1)
+        tpbtn.Font = Enum.Font.GothamBold
+        Instance.new("UICorner", tpbtn).CornerRadius = UDim.new(0, 6)
+
+        -- Teks Line/CFrame
+        local textlabel = Instance.new("TextLabel", container)
+        textlabel.Size = UDim2.new(1, -105, 1, 0) 
+        textlabel.Position = UDim2.new(0, 105, 0, 0)
+        textlabel.BackgroundTransparency = 1
+        textlabel.TextColor3 = Color3.new(1, 1, 1)
+        textlabel.Font = Enum.Font.Code
+        textlabel.TextSize = 10
+        textlabel.TextXAlignment = Enum.TextXAlignment.Left
+        textlabel.TextWrapped = true
+        textlabel.Text = string.format(
+            "LINE #%d: CFrame.new(%.3f, %.3f, %.3f) * CFrame.Angles(%.3f, %.3f, %.3f)",
+            i, pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3]
+        )
+        
+        selectbtn.MouseButton1Click:Connect(function()
+            local selected_index = table.find(selectedframes, i)
+            if selected_index then
+                table.remove(selectedframes, selected_index)
+            else
+                table.insert(selectedframes, i)
+            end
+            loadeditorcontent()
+        end)
+        
+        tpbtn.MouseButton1Click:Connect(function()
+            hrp.CFrame = cf
+            loglabel.Text = "✅ Teleported to Line #"..i
+        end)
+        
+        layoutorder = layoutorder + 1
+    end
+    
+    deleteselectedbtn.Text = string.format("🗑️ Delete Selected (%d)", #selectedframes)
+end
+
+-------------------------------------------------------------------------------
+-- GUI SETUP
+-------------------------------------------------------------------------------
+
+gui = Instance.new("ScreenGui",game.CoreGui)
+gui.Name = "ndraawzreplay"
+
+-- ... (Setup mainBtn, drag logic)
+
+local size = 40
+mainbtn = Instance.new("TextButton")
+mainbtn.Size = UDim2.new(0, size, 0, size)
+mainbtn.Position = UDim2.new(0.05, 0, 0.3, 0)
+mainbtn.BackgroundColor3 = Color3.fromRGB(0,0,0)
+mainbtn.Text = "KF"
+mainbtn.TextColor3 = Color3.fromRGB(255,255,255)
+mainbtn.Font = Enum.Font.GothamBold
+mainbtn.TextSize = 18
+mainbtn.AutoButtonColor = false
+mainbtn.AnchorPoint = Vector2.new(0.5,0.5)
+mainbtn.Parent = gui
+mainbtn.BorderSizePixel = 0
+Instance.new("UICorner",mainbtn).CornerRadius = UDim.new(0.5,0)
+local uistroke = Instance.new("UIStroke",mainbtn)
+uistroke.Thickness = 2
+uistroke.Color = Color3.fromHSV(0,1,1)
+uistroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+task.spawn(function()
+    local hue = 0
+    while task.wait(0.03) do
+        hue = (hue + 0.01) % 1
+        uistroke.Color = Color3.fromHSV(hue,1,1)
+    end
+end)
+
+local dragging = false
+local draginput, dragstart, startpos
+local function update(input)
+    local delta = input.Position - dragstart
+    mainbtn.Position = UDim2.new(startpos.X.Scale, startpos.X.Offset + delta.X, startpos.Y.Scale, startpos.Y.Offset + delta.Y)
+end
+
+mainbtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragstart = input.Position
+        startpos = mainbtn.Position
+    end
+end)
+mainbtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+userinputservice.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        update(input)
+    end
+end)
+
+frame = Instance.new("Frame",gui)
+frame.Size = UDim2.new(0,400,0,260) 
+frame.Position = UDim2.new(0,100,0.5,-130)
+frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+frame.Visible = false
+Instance.new("UICorner",frame).CornerRadius = UDim.new(0,12)
+local framestroke = Instance.new("UIStroke",frame)
+framestroke.Thickness = 2
+task.spawn(function()
+    while task.wait() do
+        for i=0,1,0.01 do
+            framestroke.Color = Color3.fromHSV(i,1,1)
+            task.wait(0.05)
+        end
+    end
+end)
+frame.Active = true
+
+replayframe = Instance.new("ScrollingFrame", gui)
+replayframe.Size = UDim2.new(0, 280, 0, 300)
+replayframe.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+replayframe.BorderSizePixel = 0
+replayframe.ScrollBarThickness = 6
+replayframe.CanvasSize = UDim2.new(0, 0, 0, 0)
+replayframe.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Instance.new("UICorner", replayframe).CornerRadius = UDim.new(0, 10) 
+local replayframestroke = Instance.new("UIStroke", replayframe)
+replayframestroke.Thickness = 2
+replayframestroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+replayframe.Active = true
+replayframe.Visible = false
+
+editorframe = Instance.new("ScrollingFrame", gui)
+editorframe.Size = UDim2.new(0, 450, 0, 400) 
+editorframe.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+editorframe.BorderSizePixel = 0
+editorframe.ScrollBarThickness = 6
+editorframe.CanvasSize = UDim2.new(0, 0, 0, 0)
+editorframe.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Instance.new("UICorner", editorframe).CornerRadius = UDim.new(0, 10) 
+local editorframestroke = Instance.new("UIStroke", editorframe)
+editorframestroke.Thickness = 2
+editorframestroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+editorframe.Active = true
+editorframe.Visible = false
+
+
+local listlayout = Instance.new("UIListLayout", replayframe)
+listlayout.SortOrder = Enum.SortOrder.LayoutOrder
+listlayout.Padding = UDim.new(0, 5)
+local padding = Instance.new("UIPadding", replayframe)
+padding.PaddingTop = UDim.new(0, 10)
+padding.PaddingLeft = UDim.new(0, 10)
+padding.PaddingRight = UDim.new(0, 10)
+padding.PaddingBottom = UDim.new(0, 10)
+
+local function updatedrag(input)
+    local delta = input.Position - dragstartpos
+    local newframepos = UDim2.new(startframepos.X.Scale, startframepos.X.Offset + delta.X, startframepos.Y.Scale, startframepos.Y.Offset + delta.Y)
+    frame.Position = newframepos
+    
+    local offsetx = frame.Size.X.Offset + 20
+    
+    if replayframe.Visible then
+        replayframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+    elseif editorframe.Visible then
+        -- Editor sejajar dengan main frame
+        editorframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+    end
+end
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingframe = true
+        dragstartpos = input.Position
+        startframepos = frame.Position
+        startreplaypos = replayframe.Position
+    end
+end)
+frame.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingframe = false
+    end
+end)
+userinputservice.InputChanged:Connect(function(input)
+    if draggingframe and (input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        updatedrag(input)
+    end
+end)
+
+local closebtn = Instance.new("TextButton",frame)
+closebtn.Size = UDim2.new(0,25,0,25)
+closebtn.Position = UDim2.new(1,-30,0,5)
+closebtn.Text = "X"
+closebtn.TextColor3 = Color3.new(1,1,1)
+closebtn.Font = Enum.Font.GothamBold
+closebtn.TextSize = 14
+closebtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
+Instance.new("UICorner",closebtn).CornerRadius = UDim.new(0,6)
+closebtn.MouseButton1Click:Connect(function()
+    gui:Destroy()
+    isRecording=false
+    isPlaying=false
+end)
+
+local textbox = Instance.new("TextBox",frame)
+textbox.Size = UDim2.new(0.6,-20,0,28)
+textbox.Position = UDim2.new(0,10,0,10)
+textbox.PlaceholderText = "Replay.lua"
+textbox.Text = "Replay.lua"
+textbox.BackgroundColor3 = Color3.fromRGB(35,35,35)
+textbox.TextColor3 = Color3.new(1,1,1)
+textbox.Font = Enum.Font.Gotham
+textbox.TextSize = 14
+Instance.new("UICorner",textbox).CornerRadius = UDim.new(0,6)
+textbox.FocusLost:Connect(function()
+    local txt = textbox.Text
+    if not txt:match("%.lua$") then txt=txt..".lua" end
+    currentfilename=txt
+end)
+
+local function makebtn(name,text,pos,size,callback,color)
+    local btn=Instance.new("TextButton",frame)
+    btn.Size=size
+    btn.Position=pos
+    btn.Text=text
+    btn.BackgroundColor3=color or Color3.fromRGB(50,120,255)
+    btn.TextColor3=Color3.new(1,1,1)
+    btn.Font=Enum.Font.GothamBold
+    btn.TextSize=14
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,8)
+    btn.MouseButton1Click:Connect(callback)
+    _G[name]=btn
+    return btn
+end
+
+recordbtn = makebtn("recordBtn","⏺ Start Record",UDim2.new(0,10,0,50),UDim2.new(0.45,-15,0,40),function()
+    if isRecording then stoprecord() else startrecord() end
+end)
+playbtn = makebtn("playBtn","▶️ Play",UDim2.new(0.55,5,0,50),UDim2.new(0.45,-15,0,40),playrecord)
+stopbtn = makebtn("stopBtn","⏹ Stop",UDim2.new(0.55,5,0,100),UDim2.new(0.45,-15,0,40),stopplay)
+savebtn = makebtn("saveBtn","💾 Save",UDim2.new(0,10,0,100),UDim2.new(0.45,-15,0,40),saverecord,Color3.fromRGB(0,200,100))
+
+loadbtn = makebtn("loadBtn","📂 List",UDim2.new(0,10,0,150),UDim2.new(0.45,-15,0,40),function()
+    if replayframe.Visible then
+        replayframe.Visible = false
+        editorframe.Visible = false
+        currentguistate = "main"
+    else
+        editorframe.Visible = false
+        replayframe.Visible = true
+        currentguistate = "list"
+        replayframe.Position = frame.Position + UDim2.new(0, frame.Size.X.Offset + 20, 0, 0)
+        loadreplaylist()
+    end
+end,Color3.fromRGB(255,170,0))
+
+resumebtn = makebtn("resumeBtn","Resume: OFF",UDim2.new(0.55,5,0,150),UDim2.new(0.45,-15,0,40),function()
+    isresumeenabled = not isresumeenabled
+    if isresumeenabled then
+        resumebtn.Text = "Resume: ON"
+        resumebtn.BackgroundColor3 = Color3.fromRGB(150, 50, 255)
+    else
+        resumebtn.Text = "Resume: OFF"
+        resumebtn.BackgroundColor3 = Color3.fromRGB(50, 120, 255)
+        lastplayedindex = 1 
+        elapsedseconds = 0
+        timerlabel.Text = "00:00:00"
+    end
+end, Color3.fromRGB(50, 120, 255))
+
+
+function loadreplaylist()
+    for _, child in ipairs(replayframe:GetChildren()) do
+        if child:IsA("TextButton") or child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    -- Pastikan UIListLayout dan UIPadding ada
+    local listLayout = replayframe:FindFirstChild("UIListLayout")
+    if not listLayout then
+        listLayout = Instance.new("UIListLayout", replayframe)
+        listLayout.Name = "UIListLayout"
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 5)
+    end
+    local padding_ = replayframe:FindFirstChild("UIPadding")
+    if not padding_ then
+        padding_ = Instance.new("UIPadding", replayframe)
+        padding_.PaddingTop = UDim.new(0, 10)
+        padding_.PaddingLeft = UDim.new(0, 10)
+        padding_.PaddingRight = UDim.new(0, 10)
+        padding_.PaddingBottom = UDim.new(0, 10)
+    end
+    
+    for _,filepath in ipairs(listfiles(replayfolder)) do
+        local name=filepath:split("/")[#filepath:split("/")]
+        local lines,sizetext=getfilestats(filepath)
+
+        local container = Instance.new("Frame", replayframe)
+        container.Size = UDim2.new(1,-20,0,30)
+        container.BackgroundTransparency = 1
+        
+        local btn=Instance.new("TextButton",container)
+        btn.Size=UDim2.new(0.8, -5, 1, 0)
+        btn.Position = UDim2.new(0,0,0,0)
+        btn.Text=string.format("%s | %d lines | %s",name,lines,sizetext)
+        btn.BackgroundColor3=Color3.fromRGB(70,70,70)
+        btn.TextColor3=Color3.new(1,1,1)
+        btn.Font=Enum.Font.Gotham
+        btn.TextSize=13
+        Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
+
+        if selectedreplayfile==filepath then
+            btn.BackgroundColor3=Color3.fromRGB(50,120,255)
+            btn.Size = UDim2.new(0.6, -5, 1, 0)
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            if selectedreplayfile==filepath then
+                selectedreplayfile=nil
+                records = {} 
+                lastplayedindex = 1
+                elapsedseconds = 0
+                timerlabel.Text = "00:00:00"
+                loadreplaylist()
+            else
+                selectedreplayfile=filepath
+                loadselectedreplay(filepath)
+                loadreplaylist()
+            end
+        end)
+        
+        if selectedreplayfile == filepath then
+            local settingsbtn = Instance.new("TextButton", container)
+            settingsbtn.Size = UDim2.new(0.2, 0, 1, 0)
+            settingsbtn.Position = UDim2.new(0.6, 5, 0, 0)
+            settingsbtn.Text = "⚙️"
+            settingsbtn.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+            settingsbtn.TextColor3 = Color3.new(1, 1, 1)
+            settingsbtn.Font = Enum.Font.GothamBold
+            settingsbtn.TextSize = 14
+            Instance.new("UICorner", settingsbtn).CornerRadius = UDim.new(0, 6)
+
+            settingsbtn.MouseButton1Click:Connect(function()
+                replayframe.Visible = false 
+                
+                selectedframes = {} 
+                currenteditorpage = 1 
+                
+                local offsetx = frame.Size.X.Offset + 20
+                
+                -- Atur posisi editorframe agar SEJAJAR
+                editorframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+                editorframe.Visible = true 
+                currentguistate = "editor"
+                
+                currentreplaycontent = {}
+                for _, cf in ipairs(records) do 
+                    table.insert(currentreplaycontent, cf)
+                end
+                
+                loadeditorcontent()
+            end)
+        end
+        
+        local delbtn = Instance.new("TextButton",container)
+        delbtn.Size = UDim2.new(0.2,0,1,0)
+        if selectedreplayfile == filepath then
+            delbtn.Position = UDim2.new(0.8, 5, 0, 0)
+        else
+            delbtn.Position = UDim2.new(0.8, 5, 0, 0)
+            btn.Size = UDim2.new(0.8, -5, 1, 0)
+        end
+        
+        delbtn.Text = "❌"
+        delbtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+        delbtn.TextColor3 = Color3.new(1,1,1)
+        delbtn.Font = Enum.Font.GothamBold
+        delbtn.TextSize = 14
+        Instance.new("UICorner",delbtn).CornerRadius=UDim.new(0,6)
+
+        delbtn.MouseButton1Click:Connect(function()
+            if selectedreplayfile==filepath then 
+                selectedreplayfile=nil
+                records = {} 
+                lastplayedindex = 1
+                elapsedseconds = 0
+                timerlabel.Text = "00:00:00"
+            end
+            delfile(filepath)
+            loadreplaylist()
+        end)
+    end
+end
+
+mainbtn.MouseButton1Click:Connect(function()
+    if frame.Visible then
+        -- Menutup GUI
+        frame.Visible = false
+        local sticky_conn = editorframe:FindFirstChild("StickyControls") and editorframe.StickyControls:FindFirstChild("ScrollConnection")
+        if sticky_conn then sticky_conn:Destroy() end
+        
+        -- TANGKAP STATUS TERAKHIR SEBELUM MENUTUP
+        if replayframe.Visible then
+            currentguistate = "list"
+        elseif editorframe.Visible then
+            currentguistate = "editor"
+        else
+            currentguistate = "main"
+        end
+        
+        replayframe.Visible = false
+        editorframe.Visible = false
+    else
+        -- Membuka GUI
+        frame.Visible = true
+        local offsetx = frame.Size.X.Offset + 20
+        
+        if currentguistate == "list" then
+            replayframe.Visible = true
+            replayframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+            loadreplaylist()
+        elseif currentguistate == "editor" then
+            editorframe.Visible = true
+            editorframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0) 
+            loadeditorcontent() 
+        else
+            currentguistate = "main"
+        end
+    end
+end)
+
+frame.Changed:Connect(function(prop)
+    if prop == "Position" and frame.Visible then
+        local offsetx = frame.Size.X.Offset + 20
+        
+        if replayframe.Visible then
+            replayframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+        elseif editorframe.Visible then
+            -- Editor sejajar dengan main frame
+            editorframe.Position = frame.Position + UDim2.new(0, offsetx, 0, 0)
+        end
+    end
+end)
+
+timerlabel = Instance.new("TextLabel", frame)
+timerlabel.Size = UDim2.new(0.4, 0, 0, 25)
+timerlabel.Position = UDim2.new(0.55, 0, 1, -65)
+timerlabel.BackgroundTransparency = 1
+timerlabel.TextColor3 = Color3.new(1, 1, 1)
+timerlabel.Font = Enum.Font.GothamBold
+timerlabel.TextSize = 16
+timerlabel.Text = "00:00:00"
+timerlabel.TextXAlignment = Enum.TextXAlignment.Right
+
+loglabel = Instance.new("TextLabel",frame)
+loglabel.Size = UDim2.new(1,-20,0,40)
+loglabel.Position = UDim2.new(0,10,1,-50)
+loglabel.BackgroundTransparency = 1
+loglabel.TextColor3 = Color3.new(1,1,1)
+loglabel.Font = Enum.Font.GothamBold
+loglabel.TextSize = 12 
+loglabel.Text = "Idle..."
+loglabel.TextXAlignment = Enum.TextXAlignment.Left
+loglabel.TextWrapped = true
+
+copybtn = Instance.new("TextButton",frame)
+copybtn.Size = UDim2.new(0,60,0,25)
+copybtn.Position = UDim2.new(1,-70,1,-15)
+copybtn.Text = "Copy"
+copybtn.TextColor3 = Color3.new(1,1,1)
+copybtn.Font = Enum.Font.GothamBold
+copybtn.TextSize = 14
+copybtn.BackgroundColor3 = Color3.fromRGB(70,70,200)
+Instance.new("UICorner",copybtn).CornerRadius = UDim.new(0,6)
+
+copybtn.MouseButton1Click:Connect(function()
+    if #records == 0 then
+        loglabel.Text = "⚠️ No frames in current record"
+        return
+    end
+
+    local currentcf = hrp.CFrame
+    local closestcf = nil
+    local closestindex = 0
+    local mindistance = math.huge
+
+    for i, cf in ipairs(records) do
+        local distance = (currentcf.Position - cf.Position).Magnitude
+        
+        if distance < mindistance then
+            mindistance = distance
+            closestcf = cf
+            closestindex = i
+        end
+    end
+    
+    if closestcf then
+        local pos = closestcf.Position
+        local rot = {closestcf:ToOrientation()}
+        
+        local cftext = string.format(
+            "CFrame.new(%.10f,%.10f,%.10f) * CFrame.Angles(%.10f,%.10f,%.10f)",
+            pos.X,pos.Y,pos.Z,rot[1],rot[2],rot[3]
+        )
+        
+        if setclipboard then
+            setclipboard(cftext)
+        end
+        
+        loglabel.Text = string.format(
+            "Copied Frame #%d (Dist: %.2f) → CFrame.new(%.3f, %.3f, %.3f) * CFrame.Angles(%.3f, %.3f, %.3f)", 
+            closestindex, mindistance, pos.X, pos.Y, pos.Z, rot[1], rot[2], rot[3]
+        )
+    else
+        loglabel.Text = "⚠️ Error: Could not find closest frame."
+    end
+end)
+</pre>
 </body>
 </html>
