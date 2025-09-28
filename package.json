@@ -1,8 +1,7 @@
 {
-  "name": "vercel-raw-text-api",
+  "name": "vercel-raw-fetcher",
   "version": "1.0.0",
-  "description": "A simple Vercel project to serve raw text via a /api endpoint.",
-  "scripts": {
-    "start": "vercel dev"
+  "engines": {
+    "node": ">=18.0.0" 
   }
 }
