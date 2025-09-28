@@ -1,0 +1,8 @@
+{
+  "name": "vercel-raw-text-api",
+  "version": "1.0.0",
+  "description": "A simple Vercel project to serve raw text via a /api endpoint.",
+  "scripts": {
+    "start": "vercel dev"
+  }
+}
