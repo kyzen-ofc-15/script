@@ -1,8 +1,0 @@
-{
-  "name": "vercel-raw-fetcher",
-  "version": "1.0.0",
-  "type": "module", 
-  "engines": {
-    "node": ">=18.0.0" 
-  }
-}
