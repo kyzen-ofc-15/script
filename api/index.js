@@ -1,34 +1,19 @@
-// API route: https://your-app.vercel.app/api
+// Default endpoint: https://your-app.vercel.app/api
+export default function handler(req, res) {
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  
+  const response = `
+Available endpoints:
 
-const fs = require('fs');
-const path = require('path');
+/main     - Main code file
+/example  - Example file
+/data     - Text data file
 
-module.exports = async (req, res) => {
-    // Set header untuk raw text
-    res.setHeader('Content-Type', 'text/plain');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    try {
-        // Baca file index.js dari root directory
-        const rootDir = path.join(process.cwd(), '..');
-        const mainFilePath = path.join(rootDir, 'index.js');
-        
-        // Coba baca file
-        const fileContent = fs.readFileSync(mainFilePath, 'utf8');
-        
-        res.status(200).send(fileContent);
-    } catch (error) {
-        // Fallback: kirim kode langsung jika file tidak bisa dibaca
-        const fallbackCode = `
-// Fallback code - file utama tidak bisa diakses
-// Ini adalah konten dari index.js di root
+Access via: https://${req.headers.host}/api/[filename]
 
-console.log("Hello World dari file utama!");
-
-module.exports = {
-    message: "Hello dari API!"
-};
-`;
-        res.status(200).send(fallbackCode);
-    }
-};
+Contoh: https://${req.headers.host}/api/main
+  `.trim();
+  
+  res.status(200).send(response);
+}
