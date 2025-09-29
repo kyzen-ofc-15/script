@@ -1,39 +1,42 @@
-const GITHUB_USERNAME = 'kyzen-ofc-15'; // User baru Anda
-const REPO_NAME = 'script'; 
-const BRANCH_NAME = 'main'; 
+const fs = require('fs');
+const path = require('path');
 
-export default async (req, res) => {
-  if (!req.url) {
-      return res.status(500).send('URL request is invalid or missing.');
-  }
-
-  // 1. Ambil path penuh dari URL, bersihkan dari /api/
-  const fullPath = req.url.replace('/api/', ''); 
+module.exports = (req, res) => {
+  // Parse path dari req.url (Vercel API route: /api/* jadi req.url = /namafile atau /raw/namafile)
+  const urlPath = req.url.slice(1); // Hilangkan leading '/'
   
-  // Hapus query parameter dan dapatkan nama file
-  const pathWithoutQuery = fullPath.split('?')[0];
-  const fileName = pathWithoutQuery; 
-
-  res.setHeader('Content-Type', 'text/plain');
-
-  // --- Pengecekan Ketersediaan File ---
-  if (!fileName || fileName === '') {
-      // Jika URL hanya /api/ atau /api
-      return res.status(400).send('Error 400: Silakan sertakan nama file setelah /api/');
+  let filePath;
+  let isRawFolder = false;
+  
+  if (urlPath.startsWith('raw/')) {
+    // Untuk /api/raw/namafile → read dari folder ./raw/namafile
+    filePath = path.join(process.cwd(), 'raw', urlPath.slice(4)); // slice 'raw/' = namafile
+    isRawFolder = true;
+  } else {
+    // Untuk /api/namafile → read dari root ./namafile
+    filePath = path.join(process.cwd(), urlPath);
   }
-
-  // --- Ambil Konten dari GitHub Raw ---
+  
   try {
-    const rawUrl = `https://raw.githubusercontent.com/${GITHUB_USERNAME}/${REPO_NAME}/${BRANCH_NAME}/${fileName}`;
-    
-    const response = await fetch(rawUrl);
-
-    if (!response.ok) {
-        // Jika file tidak ditemukan (404)
-        return res.status(404).send(`Error 404: File '${fileName}' tidak ditemukan di repositori '${REPO_NAME}'.`);
+    // Cek apakah file ada dan bisa dibaca
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: `File not found: ${urlPath}` });
     }
-
-    const fileContent = await response.text();
+    
+    const content = fs.readFileSync(filePath, 'utf8');
+    
+    // Set header untuk raw text (sama seperti static file)
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache 1 jam optional
+    
+    // Return raw content
+    res.status(200).send(content);
+    
+  } catch (error) {
+    console.error('Error reading file:', error);
+    res.status(500).json({ error: 'Internal server error while reading file' });
+  }
+};
     
     // --- Tampilkan Kode Asli ---
     return res.status(200).send(fileContent);
