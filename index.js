@@ -1,4 +1,21 @@
-module.exports = (req, res) => {
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.status(200).send('Hello from root index.js! Ini raw text untuk web utama di Vercel.');
+// File utama - akan ditampilkan via API
+const mainCode = `
+// Ini adalah kode utama dari file index.js di root
+
+function greeting() {
+    return "Hello dari file utama!";
+}
+
+const message = greeting();
+console.log(message);
+
+module.exports = {
+    greeting,
+    message
 };
+`;
+
+// Export untuk bisa diakses
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { mainCode };
+}
