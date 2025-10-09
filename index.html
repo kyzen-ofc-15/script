@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paste Kode Sederhana Vercel</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+        h1 { color: #0070f3; border-bottom: 2px solid #0070f3; padding-bottom: 10px; }
+        textarea { width: 100%; padding: 10px; font-size: 14px; border: 1px solid #ccc; box-sizing: border-box; resize: vertical; }
+        button { padding: 10px 20px; background-color: #0070f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        button:disabled { background-color: #aaa; cursor: not-allowed; }
+        .info { margin-top: 20px; font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <h1>Tempel Kode Baru</h1>
+    
+    <textarea id="codeInput" placeholder="Tempel kode Anda di sini..." rows="15"></textarea>
+    
+    <button id="submitButton" onclick="submitCode()">Simpan dan Dapatkan Tautan Raw</button>
+
+    <div class="info">
+        *Pastikan Anda telah mengatur Environment Variables (<code style="background-color:#eee; padding:2px 4px;">UPSTASH_REDIS_URL</code> dan <code style="background-color:#eee; padding:2px 4px;">UPSTASH_REDIS_TOKEN</code>) di Vercel.
+    </div>
+
+    <script>
+        const codeInput = document.getElementById('codeInput');
+        const submitButton = document.getElementById('submitButton');
+
+        async function submitCode() {
+            const code = codeInput.value.trim();
+            
+            if (!code) {
+                alert('Silakan masukkan kode!');
+                return;
+            }
+
+            submitButton.disabled = true;
+            submitButton.textContent = 'Menyimpan & Redirect...';
+
+            try {
+                // Mengirim permintaan ke fungsi serverless di Vercel: /api/paste
+                const response = await fetch('/api/paste', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ code: code }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Redirect ke URL raw yang baru: vercel.app/raw?id=random-id
+                    window.location.href = data.redirectUrl; 
+                } else {
+                    alert('Gagal menyimpan kode: ' + (data.error || 'Terjadi kesalahan.'));
+                }
+            } catch (error) {
+                console.error('Terjadi kesalahan:', error);
+                alert('Terjadi kesalahan saat berkomunikasi dengan server.');
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Simpan dan Dapatkan Tautan Raw';
+            }
+        }
+    </script>
+</body>
+</html>
