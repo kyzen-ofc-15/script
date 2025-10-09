@@ -1,0 +1,8 @@
+{
+  "name": "vercel-upstash-paste-html",
+  "version": "1.0.0",
+  "description": "Simple pastebin using HTML, Vercel Serverless, and Upstash",
+  "dependencies": {
+    "@upstash/redis": "latest"
+  }
+}
